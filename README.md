@@ -107,6 +107,8 @@ sudo mv goclean /usr/local/bin/
 ╰────────────────────────────────────────────────────────────╯
 ```
 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/10d1c3f0-c352-4f9d-a9ff-b192efe6f583" />
+
 ## Project Structure
 
 ```
