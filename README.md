@@ -95,11 +95,11 @@ sudo mv goclean /usr/local/bin/
 
 > [✓] 📦 Package Cache                                1.2 GiB
   [ ] 🔗 Orphan Packages                            256.0 MiB
-  [ ] 🗄️  System Cache                               512.0 MiB
-  [✓] 💾 User Cache                                  2.1 GiB
+  [ ] 🗄️  System Cache                              512.0 MiB
+  [✓] 💾 User Cache                                   2.1 GiB
   [ ] 📋 Journal Logs                               128.0 MiB
-  [ ] 🖼️  Thumbnails                                  64.0 MiB
-  [ ] 🗑️  Trash                                      320.0 MiB
+  [ ] 🖼️  Thumbnails                                 64.0 MiB
+  [ ] 🗑️  Trash                                     320.0 MiB
   [ ] 📁 Temp Files                                  48.0 MiB
 
 ╭────────────────────────────────────────────────────────────╮
