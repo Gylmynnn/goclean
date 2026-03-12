@@ -171,7 +171,7 @@ func (c *Cleaner) cleanOrphanPackages() CleanResult {
 }
 
 func (c *Cleaner) cleanSystemCache(items []CleanableItem) CleanResult {
-	return c.cleanPaths(CategorySystemCache, items)
+	return c.cleanPathsWithSudo(CategorySystemCache, items)
 }
 
 func (c *Cleaner) cleanUserCache(items []CleanableItem) CleanResult {
@@ -257,7 +257,40 @@ func (c *Cleaner) cleanTrash() CleanResult {
 }
 
 func (c *Cleaner) cleanTempFiles(items []CleanableItem) CleanResult {
-	return c.cleanPaths(CategoryTempFiles, items)
+	return c.cleanPathsWithSudo(CategoryTempFiles, items)
+}
+
+func (c *Cleaner) cleanPathsWithSudo(category CleanCategory, items []CleanableItem) CleanResult {
+	result := CleanResult{Category: category, Success: true}
+
+	if c.options.DryRun {
+		return result
+	}
+
+	for _, item := range items {
+		if !item.IsSelected {
+			continue
+		}
+
+		if item.IsDangerous && !c.options.IncludeDangerous {
+			continue
+		}
+
+		output, err := c.runSudoCommand("rm", "-rf", item.Path)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("failed to remove %s: %v - %s", item.Path, err, strings.TrimSpace(string(output))))
+			continue
+		}
+
+		result.BytesFreed += item.Size
+		result.ItemsCleaned++
+	}
+
+	if len(result.Errors) > 0 && result.ItemsCleaned == 0 {
+		result.Success = false
+	}
+
+	return result
 }
 
 func (c *Cleaner) cleanPaths(category CleanCategory, items []CleanableItem) CleanResult {

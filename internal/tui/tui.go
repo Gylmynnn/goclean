@@ -699,6 +699,9 @@ func (m Model) renderDetailDesktop() string {
 	cat := m.categories[m.activeCategory]
 	contentWidth := styles.GetContentWidth(m.width)
 
+	// Top padding so header doesn't stick to the top
+	b.WriteString("\n")
+
 	// Header
 	header := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -726,7 +729,7 @@ func (m Model) renderDetailDesktop() string {
 		endIdx := min(m.detailScrollOffset+visible, len(items))
 		for i := m.detailScrollOffset; i < endIdx; i++ {
 			item := items[i]
-			b.WriteString(m.renderDetailItemDesktop(item, i == m.detailCursor, contentWidth-4))
+			b.WriteString(m.renderDetailItemDesktop(item, i == m.detailCursor, contentWidth))
 			b.WriteString("\n")
 		}
 
@@ -753,16 +756,19 @@ func (m Model) renderDetailItemDesktop(item cleaner.CleanableItem, selected bool
 	}
 
 	danger := ""
+	dangerWidth := 0
 	if item.IsDangerous {
 		danger = styles.WarningStyle.Render(" !")
+		dangerWidth = 2
 	}
 
 	name := item.Name
 	size := components.FormatSizeAligned(item.Size)
 	sizeStyled := styles.GetSizeStyle(item.Size).Render(size)
 
-	// Calculate name width (fixed size width = 9)
-	nameWidth := width - len(cursor) - len(checkbox) - 9 - 6
+	// Calculate name width: total = cursor(2) + checkbox(3) + space(1) + name + danger + space(1) + size(9)
+	// So nameWidth = width - 2 - 3 - 1 - dangerWidth - 1 - 9 = width - 16 - dangerWidth
+	nameWidth := width - 16 - dangerWidth
 	if nameWidth < 10 {
 		nameWidth = 10
 	}
