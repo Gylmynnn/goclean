@@ -6,50 +6,77 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Everblush Theme Colors
+// Dark gold theme (DiceSong-inspired)
 var (
 	// Base colors
-	Background = lipgloss.Color("#141b1e")
-	Surface    = lipgloss.Color("#1e2528")
-	SurfaceAlt = lipgloss.Color("#282e31")
-	Foreground = lipgloss.Color("#dadada")
-	Comment    = lipgloss.Color("#6d7579")
+	Background = lipgloss.Color("#0d1117")
+	Surface    = lipgloss.Color("#161d27")
+	SurfaceAlt = lipgloss.Color("#212a35")
+	Foreground = lipgloss.Color("#c9ccd1")
+	Comment    = lipgloss.Color("#5f6b76")
+	Separator  = lipgloss.Color("#333b45")
 
 	// Accent colors
-	Red     = lipgloss.Color("#e57474")
-	Green   = lipgloss.Color("#8ccf7e")
-	Yellow  = lipgloss.Color("#e5c76b")
-	Blue    = lipgloss.Color("#67b0e8")
-	Magenta = lipgloss.Color("#c47fd5")
-	Cyan    = lipgloss.Color("#6cbfbf")
-	Orange  = lipgloss.Color("#ef7e57")
+	Red     = lipgloss.Color("#e06c75")
+	Green   = lipgloss.Color("#9ecb7f")
+	Yellow  = lipgloss.Color("#dfb95c")
+	Blue    = lipgloss.Color("#61afef")
+	Magenta = lipgloss.Color("#c678dd")
+	Cyan    = lipgloss.Color("#58b7c6")
+	Orange  = lipgloss.Color("#d98f5e")
 
 	// Semantic colors
-	Primary   = Cyan
-	Secondary = Green
+	Primary   = Yellow
+	Secondary = Blue
 	Danger    = Red
-	Warning   = Yellow
+	Warning   = Orange
 	Info      = Blue
 	Muted     = Comment
 
 	// Title styles
 	TitleStyle = lipgloss.NewStyle().
-			Foreground(Cyan).
+			Foreground(Yellow).
 			Bold(true)
 
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(Comment)
+
+	// Badge chip styles (header title / path badges)
+	BadgeStyle = lipgloss.NewStyle().
+			Foreground(Yellow).
+			Background(Surface).
+			Bold(true).
+			Padding(0, 1)
+
+	CountStyle = lipgloss.NewStyle().
+			Foreground(Yellow).
+			Italic(true)
+
+	PathBadgeStyle = lipgloss.NewStyle().
+			Foreground(Blue).
+			Background(Surface).
+			Padding(0, 1)
+
+	// Table header style (gold column headers)
+	TableHeaderStyle = lipgloss.NewStyle().
+				Foreground(Yellow).
+				Bold(true)
 
 	// List item styles
 	ListItemStyle = lipgloss.NewStyle().
 			Foreground(Foreground)
 
 	SelectedItemStyle = lipgloss.NewStyle().
-				Foreground(Cyan).
+				Foreground(Yellow).
+				Background(SurfaceAlt).
 				Bold(true)
 
 	CheckedItemStyle = lipgloss.NewStyle().
-				Foreground(Green)
+				Foreground(Yellow)
+
+	// Separator rule style
+	SeparatorStyle = lipgloss.NewStyle().
+			Foreground(Separator)
 
 	// Status styles
 	SuccessStyle = lipgloss.NewStyle().
@@ -71,7 +98,7 @@ var (
 
 	ActiveButtonStyle = lipgloss.NewStyle().
 				Foreground(Background).
-				Background(Cyan).
+				Background(Yellow).
 				Padding(0, 2).
 				Bold(true)
 
@@ -83,14 +110,14 @@ var (
 
 	// Progress bar styles
 	ProgressBarStyle = lipgloss.NewStyle().
-				Foreground(Cyan)
+				Foreground(Yellow)
 
 	// Help styles
 	HelpStyle = lipgloss.NewStyle().
 			Foreground(Comment)
 
 	HelpKeyStyle = lipgloss.NewStyle().
-			Foreground(Magenta).
+			Foreground(Blue).
 			Bold(true)
 
 	// Size indicator styles
@@ -105,17 +132,17 @@ var (
 
 	// Spinner style
 	SpinnerStyle = lipgloss.NewStyle().
-			Foreground(Cyan)
+			Foreground(Blue)
 
 	// Dialog styles
 	DialogStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(Orange).
+			BorderForeground(Yellow).
 			Padding(1, 2)
 
 	// Header style
 	HeaderStyle = lipgloss.NewStyle().
-			Foreground(Magenta).
+			Foreground(Yellow).
 			Bold(true)
 
 	// TextMuted style
@@ -131,9 +158,17 @@ var (
 	// Selected box style
 	SelectedBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(Cyan).
+				BorderForeground(Yellow).
 				Padding(1, 2)
 )
+
+// RenderSeparator renders a full-width horizontal rule
+func RenderSeparator(width int) string {
+	if width < 1 {
+		return ""
+	}
+	return SeparatorStyle.Render(strings.Repeat("─", width))
+}
 
 // Layouting responsive breakpoints
 const (
