@@ -19,6 +19,14 @@ func New() *Scanner {
 	return &Scanner{}
 }
 
+// execCommand runs an external command with a forced C locale so output
+// stays parseable regardless of the user's system language.
+func execCommand(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LC_MESSAGES=C")
+	return cmd
+}
+
 // ScanAll scans all categories and returns results
 func (s *Scanner) ScanAll() []cleaner.ScanResult {
 	categories := cleaner.GetCategoryInfo()
@@ -72,7 +80,7 @@ func (s *Scanner) scanPackageCache() cleaner.ScanResult {
 func (s *Scanner) scanOrphanPackages() cleaner.ScanResult {
 	result := cleaner.ScanResult{Category: cleaner.CategoryOrphanPackages}
 
-	cmd := exec.Command("pacman", "-Qdtq")
+	cmd := execCommand("pacman", "-Qdtq")
 	output, err := cmd.Output()
 	if err != nil {
 		// No orphans is not an error
@@ -92,13 +100,13 @@ func (s *Scanner) scanOrphanPackages() cleaner.ScanResult {
 		}
 
 		// Get package size
-		sizeCmd := exec.Command("pacman", "-Qi", pkg)
+		sizeCmd := execCommand("pacman", "-Qi", pkg)
 		sizeOutput, _ := sizeCmd.Output()
 		size := s.parsePackageSize(string(sizeOutput))
 
 		item := cleaner.CleanableItem{
 			Name:        pkg,
-			Path:        pkg, 
+			Path:        pkg,
 			Size:        size,
 			Category:    cleaner.CategoryOrphanPackages,
 			Description: "Orphan package - no longer required as dependency",
@@ -161,9 +169,16 @@ func (s *Scanner) scanSystemCache() cleaner.ScanResult {
 	}
 
 	for _, path := range cachePaths {
-		items, size := s.scanDirectory(path, cleaner.CategorySystemCache, false)
-		result.Items = append(result.Items, items...)
-		result.TotalSize += size
+		items, _ := s.scanDirectory(path, cleaner.CategorySystemCache, false)
+		for _, item := range items {
+			// Skip the pacman package cache; it belongs to the
+			// Package Cache category and is cleaned via paccache.
+			if item.Path == "/var/cache/pacman/pkg" {
+				continue
+			}
+			result.Items = append(result.Items, item)
+			result.TotalSize += item.Size
+		}
 	}
 
 	result.TotalCount = len(result.Items)
@@ -193,7 +208,7 @@ func (s *Scanner) scanLogs() cleaner.ScanResult {
 	result := cleaner.ScanResult{Category: cleaner.CategoryLogs}
 
 	// Get journalctl disk usage
-	cmd := exec.Command("journalctl", "--disk-usage")
+	cmd := execCommand("journalctl", "--disk-usage")
 	output, err := cmd.Output()
 	if err == nil {
 		// Parse output like "Archived and active journals take up 256.0M in the file system."
@@ -321,7 +336,8 @@ func (s *Scanner) scanTrash() cleaner.ScanResult {
 	}
 
 	trashPath := filepath.Join(home, ".local", "share", "Trash", "files")
-	size := s.getDirSize(trashPath)
+	infoPath := filepath.Join(home, ".local", "share", "Trash", "info")
+	size := s.getDirSize(trashPath) + s.getDirSize(infoPath)
 
 	// Count items in trash
 	entries, _ := os.ReadDir(trashPath)
@@ -345,13 +361,78 @@ func (s *Scanner) scanTrash() cleaner.ScanResult {
 	return result
 }
 
+// tempMinAge is the minimum age before a temp entry is offered for
+// cleaning: recently touched entries are likely still in use.
+const tempMinAge = time.Hour
+
+// isProtectedTempName reports whether a /tmp entry must never be cleaned.
+func isProtectedTempName(name string) bool {
+	switch name {
+	case ".X11-unix", ".ICE-unix", ".XIM-unix", ".font-unix", ".Test-unix", "snap-private-tmp":
+		return true
+	}
+	return strings.HasPrefix(name, "systemd-private-")
+}
+
+// scanTempDir lists /tmp style entries that are safe to clean: no
+// sockets/FIFOs, no protected names, nothing modified recently.
+func (s *Scanner) scanTempDir(dirPath string) ([]cleaner.CleanableItem, int64) {
+	var items []cleaner.CleanableItem
+	var totalSize int64
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return items, totalSize
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if isProtectedTempName(name) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		mode := info.Mode()
+		if mode&os.ModeSocket != 0 || mode&os.ModeNamedPipe != 0 {
+			continue // sockets and FIFOs may be in active use
+		}
+		if time.Since(info.ModTime()) < tempMinAge {
+			continue // touched recently, likely in use
+		}
+
+		path := filepath.Join(dirPath, name)
+		var size int64
+		if entry.IsDir() {
+			size = s.getDirSize(path)
+		} else {
+			size = info.Size()
+		}
+
+		items = append(items, cleaner.CleanableItem{
+			Name:        name,
+			Path:        path,
+			Size:        size,
+			Category:    cleaner.CategoryTempFiles,
+			Description: path,
+			LastAccess:  info.ModTime(),
+		})
+		totalSize += size
+	}
+
+	return items, totalSize
+}
+
 func (s *Scanner) scanTempFiles() cleaner.ScanResult {
 	result := cleaner.ScanResult{Category: cleaner.CategoryTempFiles}
 
 	tempPaths := []string{"/tmp", "/var/tmp"}
 
 	for _, path := range tempPaths {
-		items, size := s.scanDirectory(path, cleaner.CategoryTempFiles, false)
+		items, size := s.scanTempDir(path)
 		result.Items = append(result.Items, items...)
 		result.TotalSize += size
 	}

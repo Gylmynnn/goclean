@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View states
@@ -32,10 +33,6 @@ type scanCompleteMsg struct {
 
 type cleanCompleteMsg struct {
 	results []cleaner.CleanResult
-}
-
-type errMsg struct {
-	err error
 }
 
 type passwordValidMsg struct {
@@ -64,6 +61,7 @@ type Model struct {
 	detailCursor   int
 	confirmCursor  int
 	activeCategory int
+	confirmFrom    viewState // state to return to when canceling the confirm dialog
 
 	scrollOffset       int
 	detailScrollOffset int
@@ -75,7 +73,6 @@ type Model struct {
 
 	isScanning    bool
 	isCleaning    bool
-	errorMessage  string
 	password      string
 	passwordError string
 	isValidating  bool
@@ -91,6 +88,8 @@ func New() Model {
 		spinner: s,
 		scanner: scanner.New(),
 		cleaner: cleaner.New(cleaner.CleanOptions{KeepLastN: 1}),
+		// Show the scanning indicator while the initial scan runs
+		isScanning: true,
 	}
 }
 
@@ -104,12 +103,13 @@ func (m Model) scanCategories() tea.Msg {
 
 func (m Model) cleanSelected() tea.Msg {
 	var items []cleaner.CleanableItem
-	for _, cat := range m.categories {
-		// Include items from selected categories
+	for i := range m.categories {
+		cat := &m.categories[i]
 		if cat.Selected {
-			for i := range cat.ScanResult.Items {
-				cat.ScanResult.Items[i].IsSelected = true
-				items = append(items, cat.ScanResult.Items[i])
+			// Whole category selected: include (and mark) every item
+			for j := range cat.ScanResult.Items {
+				cat.ScanResult.Items[j].IsSelected = true
+				items = append(items, cat.ScanResult.Items[j])
 			}
 		} else {
 			// Also include individually selected items
@@ -134,7 +134,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		// Only keep the spinner ticking while an operation is running
+		// so the tick loop dies when idle.
+		if m.isScanning || m.isCleaning || m.isValidating {
+			return m, cmd
+		}
+		return m, nil
 	case scanCompleteMsg:
 		m.isScanning = false
 		m.scanResults = msg.results
@@ -143,6 +148,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cleanCompleteMsg:
 		m.isCleaning = false
 		m.cleanResults = msg.results
+		// Clear the sudo password from memory once cleaning is done
+		m.password = ""
+		m.passwordError = ""
+		m.cleaner.SetPassword("")
 		m.state = viewResults
 		return m, nil
 	case passwordValidMsg:
@@ -151,14 +160,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Password is correct, proceed with cleaning
 			m.isCleaning = true
 			m.state = viewCleaning
-			return m, m.cleanSelected
+			return m, tea.Batch(m.cleanSelected, m.spinner.Tick)
 		}
 		// Password is incorrect
-		m.passwordError = "Incorrect password"
+		if msg.err != nil {
+			m.passwordError = msg.err.Error()
+		} else {
+			m.passwordError = "Incorrect password"
+		}
 		m.password = ""
-		return m, nil
-	case errMsg:
-		m.errorMessage = msg.err.Error()
 		return m, nil
 	}
 	return m, nil
@@ -184,8 +194,13 @@ func (m *Model) initCategories() {
 }
 
 func (m Model) visibleItems() int {
-	// Use full height, reserve space for header and summary only
-	available := m.height - 8
+	// Reserve space for chrome (header bar, separators, footer).
+	// Desktop shows more chrome than mobile.
+	chrome := 8
+	if styles.IsDesktop(m.width) {
+		chrome = 10
+	}
+	available := m.height - chrome
 	if available < 3 {
 		return 3
 	}
@@ -247,13 +262,14 @@ func (m Model) handleMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.categories[i].Selected = false
 		}
 	case "c":
-		if m.hasSelectedCategories() {
+		if m.hasSelectedCategories() || m.hasSelectedItems() {
 			m.confirmCursor = 0
+			m.confirmFrom = viewMain
 			m.state = viewConfirm
 		}
 	case "r":
 		m.isScanning = true
-		return m, m.scanCategories
+		return m, tea.Batch(m.scanCategories, m.spinner.Tick)
 	}
 	return m, nil
 }
@@ -301,6 +317,7 @@ func (m Model) handleDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clean selected items in this category
 		if m.hasSelectedItemsInCategory() {
 			m.confirmCursor = 0
+			m.confirmFrom = viewDetails
 			m.state = viewConfirm
 		}
 	}
@@ -320,7 +337,7 @@ func (m Model) hasSelectedItemsInCategory() bool {
 func (m Model) handleConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "n":
-		m.state = viewMain
+		m.state = m.confirmFrom
 	case "left", "h":
 		m.confirmCursor = 0
 	case "right", "l":
@@ -349,7 +366,7 @@ func (m Model) startCleaning() (tea.Model, tea.Cmd) {
 	// No root needed, proceed with cleaning
 	m.isCleaning = true
 	m.state = viewCleaning
-	return m, m.cleanSelected
+	return m, tea.Batch(m.cleanSelected, m.spinner.Tick)
 }
 
 func (m Model) getSelectedCategories() []cleaner.CleanCategory {
@@ -387,16 +404,16 @@ func (m Model) handlePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.password) > 0 {
 			m.isValidating = true
 			m.passwordError = ""
-			return m, m.validatePassword
+			return m, tea.Batch(m.validatePassword, m.spinner.Tick)
 		}
 	case "backspace":
 		if len(m.password) > 0 {
 			m.password = m.password[:len(m.password)-1]
 		}
 	default:
-		// Only add printable characters
-		if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] <= 126 {
-			m.password += msg.String()
+		// Accept any printable character, including non-ASCII (UTF-8)
+		if len(msg.Runes) > 0 {
+			m.password += string(msg.Runes)
 		}
 	}
 	return m, nil
@@ -412,10 +429,10 @@ func (m Model) handleResultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
-	case "r", "enter":
+	case "r", "enter", "esc":
 		m.isScanning = true
 		m.state = viewMain
-		return m, m.scanCategories
+		return m, tea.Batch(m.scanCategories, m.spinner.Tick)
 	}
 	return m, nil
 }
@@ -424,6 +441,17 @@ func (m Model) hasSelectedCategories() bool {
 	for _, cat := range m.categories {
 		if cat.Selected {
 			return true
+		}
+	}
+	return false
+}
+
+func (m Model) hasSelectedItems() bool {
+	for _, cat := range m.categories {
+		for _, item := range cat.ScanResult.Items {
+			if item.IsSelected {
+				return true
+			}
 		}
 	}
 	return false
@@ -468,11 +496,11 @@ func (m Model) renderMainMobile() string {
 	var b strings.Builder
 
 	// Compact header
-	b.WriteString(styles.TitleStyle.Render(" GoClean"))
+	b.WriteString(styles.BadgeStyle.Render("\uf521 GOCLEAN")) // nf-fa-crown
 	b.WriteString("\n\n")
 
 	if m.isScanning {
-		b.WriteString(fmt.Sprintf(" %s Scanning...\n", m.spinner.View()))
+		fmt.Fprintf(&b, " %s Scanning...\n", m.spinner.View())
 		return b.String()
 	}
 
@@ -504,68 +532,116 @@ func (m Model) renderMainMobile() string {
 	return b.String()
 }
 
+// truncateDisplay truncates s to the given display width, appending an
+// ellipsis. Safe for UTF-8 and wide characters.
+func truncateDisplay(s string, w int) string {
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	if w <= 1 {
+		return ""
+	}
+	return ansi.Truncate(s, w, "...")
+}
+
+// padRight pads s with spaces until it occupies display width w.
+func padRight(s string, w int) string {
+	pad := w - lipgloss.Width(s)
+	if pad > 0 {
+		return s + strings.Repeat(" ", pad)
+	}
+	return s
+}
+
+// renderHeaderBar renders a badge-style title on the left and a
+// right-aligned count, DiceSong style.
+func renderHeaderBar(title, right string, width int) string {
+	badge := styles.BadgeStyle.Render("\uf521 " + title) // nf-fa-crown
+	rightText := styles.CountStyle.Render(right)
+	gap := width - lipgloss.Width(badge) - lipgloss.Width(rightText)
+	if gap < 1 {
+		gap = 1
+	}
+	return badge + strings.Repeat(" ", gap) + rightText
+}
+
+// renderTableHeader renders gold column headers: "Name" left, "Size" right.
+func renderTableHeader(width int) string {
+	const sizeColWidth = 9
+	nameColWidth := max(width-2-sizeColWidth, 10)
+	return "  " +
+		styles.TableHeaderStyle.Render(fmt.Sprintf("%-*s", nameColWidth, "Name")) +
+		styles.TableHeaderStyle.Render(fmt.Sprintf("%*s", sizeColWidth, "Size"))
+}
+
+// renderFooter renders a separator and a help bar.
+func renderFooter(width int, keys []components.HelpKey) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(width))
+	b.WriteString("\n")
+	b.WriteString("  " + components.RenderHelp(keys))
+	return b.String()
+}
+
 func (m Model) renderMainDesktop() string {
 	var b strings.Builder
 	contentWidth := styles.GetContentWidth(m.width)
 
-	// Header with border
-	header := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.SurfaceAlt).
-		Padding(0, 2).
-		Width(contentWidth).
-		Render(styles.TitleStyle.Render("GoClean") + "  " + styles.SubtitleStyle.Render("Arch Linux System Cleaner"))
-
-	b.WriteString(header)
-	b.WriteString("\n\n")
+	// Header bar: crown badge + right-aligned category count / position
+	right := fmt.Sprintf("%d Categories", len(m.categories))
+	if len(m.categories) > m.visibleItems() {
+		right = fmt.Sprintf("%d / %d", m.cursor+1, len(m.categories))
+	}
+	b.WriteString(renderHeaderBar("GOCLEAN", right, contentWidth))
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
+	b.WriteString("\n")
 
 	if m.isScanning {
-		b.WriteString(fmt.Sprintf("  %s Scanning system...\n", m.spinner.View()))
+		b.WriteString(styles.PathBadgeStyle.Render(fmt.Sprintf("%s Scanning system...", m.spinner.View())))
+		b.WriteString("\n")
+		b.WriteString(styles.RenderSeparator(contentWidth))
 		return b.String()
 	}
 
-	// Categories section
-	b.WriteString(styles.HeaderStyle.Render("  Categories"))
-	if len(m.categories) > m.visibleItems() {
-		b.WriteString(styles.TextMutedStyle.Render(fmt.Sprintf("  [%d/%d]", m.cursor+1, len(m.categories))))
+	// Status line: selection summary badge
+	totalSize, count := m.calculateSelected()
+	var statusLine string
+	if count > 0 {
+		statusLine = styles.PathBadgeStyle.Render(fmt.Sprintf("%d selected", count)) +
+			" " +
+			styles.GetSizeStyle(totalSize).Render(components.FormatSize(totalSize)) +
+			styles.TextMutedStyle.Render(" to be freed")
+	} else {
+		statusLine = styles.PathBadgeStyle.Render("Nothing selected") +
+			" " +
+			styles.TextMutedStyle.Render("space to select • a select all • n none")
 	}
-	b.WriteString("\n\n")
+	b.WriteString(statusLine)
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
+	b.WriteString("\n")
 
+	// Table header
+	b.WriteString(renderTableHeader(contentWidth))
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
+	b.WriteString("\n")
+
+	// Categories
 	visible := m.visibleItems()
 	endIdx := min(m.scrollOffset+visible, len(m.categories))
-
 	for i := m.scrollOffset; i < endIdx; i++ {
-		cat := m.categories[i]
-		b.WriteString(m.renderCategoryItemDesktop(cat, i == m.cursor, contentWidth-4))
+		b.WriteString(m.renderCategoryItemDesktop(m.categories[i], i == m.cursor, contentWidth))
 		b.WriteString("\n")
 	}
 
-	if m.scrollOffset > 0 {
-		b.WriteString(styles.TextMutedStyle.Render("     ↑ scroll up\n"))
-	}
-	if endIdx < len(m.categories) {
-		b.WriteString(styles.TextMutedStyle.Render("     ↓ scroll down\n"))
-	}
-
-	// Summary box
-	b.WriteString("\n")
-	totalSize, count := m.calculateSelected()
-	var summaryText string
-	if count > 0 {
-		summaryText = fmt.Sprintf("%s  •  %s to be freed",
-			styles.SuccessStyle.Render(fmt.Sprintf("%d items selected", count)),
-			styles.GetSizeStyle(totalSize).Render(components.FormatSize(totalSize)))
-	} else {
-		summaryText = styles.TextMutedStyle.Render("No items selected")
-	}
-
-	summaryBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.SurfaceAlt).
-		Padding(0, 2).
-		Width(contentWidth).
-		Render(summaryText)
-	b.WriteString(summaryBox)
+	// Footer
+	b.WriteString(renderFooter(contentWidth, []components.HelpKey{
+		{Key: "↑↓", Desc: "move"}, {Key: "space", Desc: "select"}, {Key: "enter", Desc: "details"},
+		{Key: "c", Desc: "clean"}, {Key: "r", Desc: "rescan"}, {Key: "q", Desc: "quit"},
+	}))
 
 	return b.String()
 }
@@ -573,7 +649,7 @@ func (m Model) renderMainDesktop() string {
 func (m Model) renderCategoryItemMobile(cat CategoryData, selected bool) string {
 	cursor := " "
 	if selected {
-		cursor = ">"
+		cursor = "▶"
 	}
 
 	checkbox := "○"
@@ -603,7 +679,7 @@ func (m Model) renderCategoryItemMobile(cat CategoryData, selected bool) string 
 func (m Model) renderCategoryItemDesktop(cat CategoryData, selected bool, width int) string {
 	cursor := "  "
 	if selected {
-		cursor = "> "
+		cursor = "▶ "
 	}
 
 	checkbox := "[ ]"
@@ -611,25 +687,25 @@ func (m Model) renderCategoryItemDesktop(cat CategoryData, selected bool, width 
 		checkbox = "[✓]"
 	}
 
-	icon := cat.Info.Icon
+	const sizeColWidth = 9
+	prefix := cursor + checkbox + " " + cat.Info.Icon + " "
+	prefixWidth := lipgloss.Width(prefix)
+
 	name := cat.Info.Name
+	nameWidth := max(width-prefixWidth-sizeColWidth, 10)
+	paddedName := padRight(truncateDisplay(name, nameWidth), nameWidth)
+
 	size := components.FormatSizeAligned(cat.ScanResult.TotalSize)
-	sizeStyled := styles.GetSizeStyle(cat.ScanResult.TotalSize).Render(size)
-
-	// Calculate padding for alignment (fixed size width = 9)
-	nameWidth := width - len(cursor) - len(checkbox) - 4 - 9 - 6 // 4 for icon+space, 9 for size, 6 for spacing
-	if nameWidth < 10 {
-		nameWidth = 10
+	// Selected rows are colored entirely gold by SelectedItemStyle
+	sizeStyled := size
+	if !selected {
+		sizeStyled = styles.GetSizeStyle(cat.ScanResult.TotalSize).Render(size)
 	}
-	if len(name) > nameWidth {
-		name = name[:nameWidth-3] + "..."
-	}
-	paddedName := fmt.Sprintf("%-*s", nameWidth, name)
 
-	line := fmt.Sprintf("%s%s %s %s %s", cursor, checkbox, icon, paddedName, sizeStyled)
+	line := prefix + paddedName + sizeStyled
 
 	if selected {
-		return styles.SelectedItemStyle.Render(line)
+		return styles.SelectedItemStyle.Width(width).Render(line)
 	}
 	if cat.Selected {
 		return styles.CheckedItemStyle.Render(line)
@@ -648,7 +724,7 @@ func (m Model) renderDetailMobile() string {
 	var b strings.Builder
 	cat := m.categories[m.activeCategory]
 
-	b.WriteString(styles.TitleStyle.Render(fmt.Sprintf(" %s %s", cat.Info.Icon, cat.Info.Name)))
+	b.WriteString(styles.PathBadgeStyle.Render(fmt.Sprintf("%s %s", cat.Info.Icon, cat.Info.Name)))
 	b.WriteString("\n\n")
 
 	items := cat.ScanResult.Items
@@ -663,7 +739,7 @@ func (m Model) renderDetailMobile() string {
 			item := items[i]
 			cursor := " "
 			if i == m.detailCursor {
-				cursor = ">"
+				cursor = "▶"
 			}
 			checkbox := "○"
 			if item.IsSelected {
@@ -698,48 +774,56 @@ func (m Model) renderDetailDesktop() string {
 	var b strings.Builder
 	cat := m.categories[m.activeCategory]
 	contentWidth := styles.GetContentWidth(m.width)
+	items := cat.ScanResult.Items
 
-	// Top padding so header doesn't stick to the top
+	// Header bar with position indicator
+	b.WriteString(renderHeaderBar("GOCLEAN", fmt.Sprintf("%d / %d", m.activeCategory+1, len(m.categories)), contentWidth))
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
 	b.WriteString("\n")
 
-	// Header
-	header := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.SurfaceAlt).
-		Padding(0, 2).
-		Width(contentWidth).
-		Render(styles.TitleStyle.Render(fmt.Sprintf("%s %s", cat.Info.Icon, cat.Info.Name)) +
-			"  " + styles.SubtitleStyle.Render(cat.Info.Description))
+	// Category badge + muted description
+	b.WriteString(styles.PathBadgeStyle.Render(cat.Info.Icon + " " + cat.Info.Name))
+	b.WriteString(styles.TextMutedStyle.Render("  " + cat.Info.Description))
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
+	b.WriteString("\n")
 
-	b.WriteString(header)
-	b.WriteString("\n\n")
+	// Table header
+	b.WriteString(renderTableHeader(contentWidth))
+	b.WriteString("\n")
+	b.WriteString(styles.RenderSeparator(contentWidth))
+	b.WriteString("\n")
 
-	items := cat.ScanResult.Items
 	if len(items) == 0 {
-		b.WriteString(styles.TextMutedStyle.Render("  No items found in this category\n"))
+		b.WriteString(styles.TextMutedStyle.Render("  No items found in this category"))
 	} else {
 		visible := m.visibleItems()
-		if len(items) > visible {
-			b.WriteString(styles.TextMutedStyle.Render(fmt.Sprintf("  Showing %d-%d of %d\n\n",
-				m.detailScrollOffset+1,
-				min(m.detailScrollOffset+visible, len(items)),
-				len(items))))
-		}
-
 		endIdx := min(m.detailScrollOffset+visible, len(items))
 		for i := m.detailScrollOffset; i < endIdx; i++ {
-			item := items[i]
-			b.WriteString(m.renderDetailItemDesktop(item, i == m.detailCursor, contentWidth))
+			b.WriteString(m.renderDetailItemDesktop(items[i], i == m.detailCursor, contentWidth))
 			b.WriteString("\n")
 		}
 
-		if m.detailScrollOffset > 0 {
-			b.WriteString(styles.TextMutedStyle.Render("     ↑ more above\n"))
-		}
-		if endIdx < len(items) {
-			b.WriteString(styles.TextMutedStyle.Render("     ↓ more below\n"))
+		// Compact scroll indicator
+		if m.detailScrollOffset > 0 || endIdx < len(items) {
+			var hints []string
+			if m.detailScrollOffset > 0 {
+				hints = append(hints, "↑ more above")
+			}
+			if endIdx < len(items) {
+				hints = append(hints, "↓ more below")
+			}
+			b.WriteString(styles.TextMutedStyle.Render("  " + strings.Join(hints, "  ")))
+			b.WriteString("\n")
 		}
 	}
+
+	// Footer
+	b.WriteString(renderFooter(contentWidth, []components.HelpKey{
+		{Key: "space", Desc: "select"}, {Key: "a", Desc: "all"}, {Key: "n", Desc: "none"},
+		{Key: "c", Desc: "clean"}, {Key: "esc", Desc: "back"},
+	}))
 
 	return b.String()
 }
@@ -747,7 +831,7 @@ func (m Model) renderDetailDesktop() string {
 func (m Model) renderDetailItemDesktop(item cleaner.CleanableItem, selected bool, width int) string {
 	cursor := "  "
 	if selected {
-		cursor = "> "
+		cursor = "▶ "
 	}
 
 	checkbox := "[ ]"
@@ -762,25 +846,25 @@ func (m Model) renderDetailItemDesktop(item cleaner.CleanableItem, selected bool
 		dangerWidth = 2
 	}
 
+	const sizeColWidth = 9
+	prefix := cursor + checkbox + " "
+	prefixWidth := lipgloss.Width(prefix)
+
 	name := item.Name
+	nameWidth := max(width-prefixWidth-dangerWidth-1-sizeColWidth, 10)
+	paddedName := padRight(truncateDisplay(name, nameWidth), nameWidth)
+
 	size := components.FormatSizeAligned(item.Size)
-	sizeStyled := styles.GetSizeStyle(item.Size).Render(size)
-
-	// Calculate name width: total = cursor(2) + checkbox(3) + space(1) + name + danger + space(1) + size(9)
-	// So nameWidth = width - 2 - 3 - 1 - dangerWidth - 1 - 9 = width - 16 - dangerWidth
-	nameWidth := width - 16 - dangerWidth
-	if nameWidth < 10 {
-		nameWidth = 10
+	// Selected rows are colored entirely gold by SelectedItemStyle
+	sizeStyled := size
+	if !selected {
+		sizeStyled = styles.GetSizeStyle(item.Size).Render(size)
 	}
-	if len(name) > nameWidth {
-		name = name[:nameWidth-3] + "..."
-	}
-	paddedName := fmt.Sprintf("%-*s", nameWidth, name)
 
-	line := fmt.Sprintf("%s%s %s%s %s", cursor, checkbox, paddedName, danger, sizeStyled)
+	line := prefix + paddedName + danger + " " + sizeStyled
 
 	if selected {
-		return styles.SelectedItemStyle.Render(line)
+		return styles.SelectedItemStyle.Width(width).Render(line)
 	}
 	if item.IsSelected {
 		return styles.CheckedItemStyle.Render(line)
@@ -796,10 +880,35 @@ func (m Model) renderConfirmView() string {
 	if styles.IsDesktop(m.width) {
 		contentWidth := styles.GetContentWidth(m.width)
 
+		// Collect selection summary: whole categories and/or individual items
+		type selectedCat struct {
+			icon, name string
+			size       int64
+		}
+		var selected []selectedCat
+		for _, cat := range m.categories {
+			var size int64
+			var n int
+			if cat.Selected {
+				size = cat.ScanResult.TotalSize
+				n = len(cat.ScanResult.Items)
+			} else {
+				for _, item := range cat.ScanResult.Items {
+					if item.IsSelected {
+						size += item.Size
+						n++
+					}
+				}
+			}
+			if n > 0 {
+				selected = append(selected, selectedCat{icon: cat.Info.Icon, name: cat.Info.Name, size: size})
+			}
+		}
+
 		// Warning dialog
 		dialogContent := fmt.Sprintf("%s\n\nYou are about to clean %d categories (%s).\nThis action cannot be undone.",
-			styles.WarningStyle.Render("⚠ Confirm Cleaning"),
-			count,
+			styles.WarningStyle.Render("\uf071 Confirm Cleaning"), // nf-fa-warning
+			len(selected),
 			components.FormatSize(totalSize))
 
 		dialog := lipgloss.NewStyle().
@@ -815,19 +924,17 @@ func (m Model) renderConfirmView() string {
 		// Selected list
 		b.WriteString(styles.HeaderStyle.Render("  Selected:"))
 		b.WriteString("\n")
-		for _, cat := range m.categories {
-			if cat.Selected {
-				b.WriteString(fmt.Sprintf("   • %s %s (%s)\n",
-					cat.Info.Icon,
-					cat.Info.Name,
-					components.FormatSize(cat.ScanResult.TotalSize)))
-			}
+		for _, s := range selected {
+			fmt.Fprintf(&b, "   • %s %s (%s)\n",
+				s.icon,
+				s.name,
+				components.FormatSize(s.size))
 		}
 	} else {
 		// Mobile
-		b.WriteString(styles.WarningStyle.Render(" ⚠ Confirm Clean"))
+		b.WriteString(styles.WarningStyle.Render(" \uf071 Confirm Clean")) // nf-fa-warning
 		b.WriteString("\n\n")
-		b.WriteString(fmt.Sprintf(" %d items • %s\n\n", count, components.FormatSize(totalSize)))
+		fmt.Fprintf(&b, " %d items • %s\n\n", count, components.FormatSize(totalSize))
 	}
 
 	b.WriteString("\n")
@@ -839,8 +946,10 @@ func (m Model) renderConfirmView() string {
 		cancelBtn = styles.ActiveButtonStyle.Render(" Cancel ")
 	}
 
-	b.WriteString("  " + cancelBtn + "  " + confirmBtn)
-
+	b.WriteString("  ")
+	b.WriteString(cancelBtn)
+	b.WriteString("  ")
+	b.WriteString(confirmBtn)
 	return b.String()
 }
 
@@ -854,16 +963,16 @@ func (m Model) renderPasswordView() string {
 		var dialogContent string
 		if m.isValidating {
 			dialogContent = fmt.Sprintf("%s\n\n%s Validating password...",
-				styles.HeaderStyle.Render("🔐 Authentication Required"),
+				styles.HeaderStyle.Render("\uf023 Authentication Required"), // nf-fa-lock
 				m.spinner.View())
 		} else {
 			dialogContent = fmt.Sprintf("%s\n\nSome cleaning operations require administrator privileges.\nPlease enter your sudo password:",
-				styles.HeaderStyle.Render("🔐 Authentication Required"))
+				styles.HeaderStyle.Render("\uf023 Authentication Required")) // nf-fa-lock
 		}
 
 		dialog := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(styles.Magenta).
+			BorderForeground(styles.Blue).
 			Padding(1, 3).
 			Width(contentWidth).
 			Render(dialogContent)
@@ -879,7 +988,7 @@ func (m Model) renderPasswordView() string {
 
 		inputBox := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(styles.Cyan).
+			BorderForeground(styles.Blue).
 			Padding(0, 2).
 			Width(contentWidth).
 			Render("  Password: " + passwordDisplay)
@@ -889,16 +998,17 @@ func (m Model) renderPasswordView() string {
 		// Error message
 		if m.passwordError != "" {
 			b.WriteString("\n\n")
-			b.WriteString("  " + styles.ErrorStyle.Render("✗ "+m.passwordError))
+			b.WriteString("  ")
+			b.WriteString(styles.ErrorStyle.Render("\uf00d " + m.passwordError)) // nf-fa-times
 		}
 
 	} else {
 		// Mobile view
-		b.WriteString(styles.HeaderStyle.Render(" 🔐 Authentication"))
+		b.WriteString(styles.HeaderStyle.Render(" \uf023 Authentication")) // nf-fa-lock
 		b.WriteString("\n\n")
 
 		if m.isValidating {
-			b.WriteString(fmt.Sprintf(" %s Validating...\n", m.spinner.View()))
+			fmt.Fprintf(&b, " %s Validating...\n", m.spinner.View())
 		} else {
 			b.WriteString(" Enter sudo password:\n\n")
 
@@ -906,11 +1016,13 @@ func (m Model) renderPasswordView() string {
 			if len(passwordDisplay) == 0 {
 				passwordDisplay = styles.TextMutedStyle.Render("(type here)")
 			}
-			b.WriteString(" > " + passwordDisplay + "\n")
+			b.WriteString(" > ")
+			b.WriteString(passwordDisplay)
+			b.WriteString("\n")
 
 			if m.passwordError != "" {
 				b.WriteString("\n")
-				b.WriteString(styles.ErrorStyle.Render(" ✗ " + m.passwordError))
+				b.WriteString(styles.ErrorStyle.Render(" \uf00d " + m.passwordError)) // nf-fa-times
 				b.WriteString("\n")
 			}
 		}
@@ -926,7 +1038,7 @@ func (m Model) renderCleaningView() string {
 		contentWidth := styles.GetContentWidth(m.width)
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(styles.Cyan).
+			BorderForeground(styles.Yellow).
 			Padding(2, 4).
 			Width(contentWidth).
 			Align(lipgloss.Center).
@@ -935,7 +1047,7 @@ func (m Model) renderCleaningView() string {
 				styles.WarningStyle.Render("Please wait, do not interrupt.")))
 		b.WriteString(box)
 	} else {
-		b.WriteString(fmt.Sprintf("\n %s Cleaning...\n", m.spinner.View()))
+		fmt.Fprintf(&b, "\n %s Cleaning...\n", m.spinner.View())
 		b.WriteString(styles.WarningStyle.Render(" Please wait..."))
 	}
 
@@ -961,7 +1073,7 @@ func (m Model) renderResultsView() string {
 			BorderForeground(styles.Green).
 			Padding(0, 2).
 			Width(contentWidth).
-			Render(styles.SuccessStyle.Render("✓ Cleaning Complete!") +
+			Render(styles.SuccessStyle.Render("\uf00c Cleaning Complete!") + // nf-fa-check
 				fmt.Sprintf("  %d items cleaned, %s freed", totalItems, components.FormatSize(totalFreed)))
 
 		b.WriteString(header)
@@ -969,14 +1081,15 @@ func (m Model) renderResultsView() string {
 
 		// Results
 		for _, result := range m.cleanResults {
-			b.WriteString("  " + components.RenderResult(result))
+			b.WriteString("  ")
+			b.WriteString(components.RenderResult(result))
 			b.WriteString("\n")
 		}
 	} else {
-		b.WriteString(styles.SuccessStyle.Render(" ✓ Complete!"))
+		b.WriteString(styles.SuccessStyle.Render(" \uf00c Complete!")) // nf-fa-check
 		b.WriteString("\n\n")
-		b.WriteString(fmt.Sprintf(" %d items\n", totalItems))
-		b.WriteString(fmt.Sprintf(" %s freed\n", components.FormatSize(totalFreed)))
+		fmt.Fprintf(&b, " %d items\n", totalItems)
+		fmt.Fprintf(&b, " %s freed\n", components.FormatSize(totalFreed))
 	}
 
 	return b.String()
@@ -987,18 +1100,20 @@ func (m Model) calculateSelected() (int64, int) {
 	var count int
 	for _, cat := range m.categories {
 		if cat.Selected {
+			// Whole category selected: all its items are included
 			totalSize += cat.ScanResult.TotalSize
 			count++
+			continue
+		}
+		// Individually selected items still count
+		for _, item := range cat.ScanResult.Items {
+			if item.IsSelected {
+				totalSize += item.Size
+				count++
+			}
 		}
 	}
 	return totalSize, count
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func Run() error {
