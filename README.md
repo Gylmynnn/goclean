@@ -86,27 +86,11 @@ sudo mv goclean /usr/local/bin/
 
 ## Screenshots
 
-```
-╭────────────────────────────────────────────────────────────╮
-│ GoClean  Arch Linux System Cleaner                         │
-╰────────────────────────────────────────────────────────────╯
 
-  Categories
+Latest Style
+<img width="1840" height="957" alt="image" src="https://github.com/user-attachments/assets/5f3325df-e03c-44c3-856c-3afb4f784246" />
 
-> [✓] 📦 Package Cache                                1.2 GiB
-  [ ] 🔗 Orphan Packages                            256.0 MiB
-  [ ] 🗄️  System Cache                              512.0 MiB
-  [✓] 💾 User Cache                                   2.1 GiB
-  [ ] 📋 Journal Logs                               128.0 MiB
-  [ ] 🖼️  Thumbnails                                 64.0 MiB
-  [ ] 🗑️  Trash                                     320.0 MiB
-  [ ] 📁 Temp Files                                  48.0 MiB
-
-╭────────────────────────────────────────────────────────────╮
-│ 2 items selected  •  3.3 GiB to be freed                   │
-╰────────────────────────────────────────────────────────────╯
-```
-
+Old Style
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/10d1c3f0-c352-4f9d-a9ff-b192efe6f583" />
 
 ## Project Structure
