@@ -45,9 +45,9 @@ func RenderHelp(keys []HelpKey) string {
 func RenderResult(result cleaner.CleanResult) string {
 	var status string
 	if result.Success {
-		status = styles.SuccessStyle.Render("✓ ")
+		status = styles.SuccessStyle.Render("\uf00c ") // nf-fa-check
 	} else {
-		status = styles.ErrorStyle.Render("✗ ")
+		status = styles.ErrorStyle.Render("\uf00d ") // nf-fa-times
 	}
 
 	var info strings.Builder

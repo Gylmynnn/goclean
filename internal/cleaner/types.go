@@ -71,7 +71,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryPackageCache,
 			Name:         "Package Cache",
 			Description:  "Cached package files from pacman downloads",
-			Icon:         "📦",
+			Icon:         "\uf187 ", // nf-fa-archive
 			IsDangerous:  false,
 			RequiresRoot: true,
 		},
@@ -79,7 +79,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryOrphanPackages,
 			Name:         "Orphan Packages",
 			Description:  "Packages installed as dependencies but no longer required",
-			Icon:         "👻",
+			Icon:         "\uf6bb ", // nf-fa-ghost
 			IsDangerous:  true,
 			RequiresRoot: true,
 		},
@@ -87,7 +87,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategorySystemCache,
 			Name:         "System Cache",
 			Description:  "System-wide cache files",
-			Icon:         "🗄️",
+			Icon:         "\uf1c0 ", // nf-fa-database
 			IsDangerous:  false,
 			RequiresRoot: true,
 		},
@@ -95,7 +95,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryUserCache,
 			Name:         "User Cache",
 			Description:  "User application cache files (~/.cache)",
-			Icon:         "💾",
+			Icon:         "\uf0c7 ", // nf-fa-save
 			IsDangerous:  false,
 			RequiresRoot: false,
 		},
@@ -103,7 +103,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryLogs,
 			Name:         "System Logs",
 			Description:  "Old system and journal logs",
-			Icon:         "📜",
+			Icon:         "\uf15c ", // nf-fa-file-text
 			IsDangerous:  false,
 			RequiresRoot: true,
 		},
@@ -111,7 +111,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryThumbnails,
 			Name:         "Thumbnails",
 			Description:  "Cached thumbnail images",
-			Icon:         "🖼️",
+			Icon:         "\uf03e ", // nf-fa-image
 			IsDangerous:  false,
 			RequiresRoot: false,
 		},
@@ -119,7 +119,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryTrash,
 			Name:         "Trash",
 			Description:  "Files in trash/recycle bin",
-			Icon:         "🗑️",
+			Icon:         "\uf1f8 ", // nf-fa-trash
 			IsDangerous:  false,
 			RequiresRoot: false,
 		},
@@ -127,7 +127,7 @@ func GetCategoryInfo() []CategoryInfo {
 			Category:     CategoryTempFiles,
 			Name:         "Temporary Files",
 			Description:  "Temporary files in /tmp and /var/tmp",
-			Icon:         "⏳",
+			Icon:         "\uf252 ", // nf-fa-hourglass-half
 			IsDangerous:  false,
 			RequiresRoot: true,
 		},
